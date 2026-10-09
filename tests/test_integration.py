@@ -159,3 +159,4 @@ def test_transfer_rejects_same_warehouse(client):
         },
     )
     assert response.status_code == 409
+
