@@ -1,3 +1,4 @@
+
 version: 2.1
 
 jobs:
@@ -45,6 +46,11 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y postgresql-client
       - run:
+          name: Install Redis client
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y redis-tools
+      - run:
           name: Install Python dependencies
           command: pip install -r requirements.txt pytest pytest-cov
       - run:
@@ -67,8 +73,8 @@ jobs:
           name: Apply database migrations
           command: |
             for file in migrations/*.sql; do
-              PGPASSWORD=local_dev_password psql 
-                -h localhost -U inventory -d inventory 
+              PGPASSWORD=local_dev_password psql \
+                -h localhost -U inventory -d inventory \
                 -v ON_ERROR_STOP=1 -f "$file"
             done
       - run:
@@ -84,12 +90,12 @@ jobs:
           name: Scan repository for secrets
           command: |
             set -eu
-            if grep -RInE 
-              --exclude-dir=.git 
-              --exclude-dir=.venv 
-              --exclude-dir=__pycache__ 
-              --exclude-dir=.pytest_cache 
-              --exclude='*.pyc' 
+            if grep -RInE \
+              --exclude-dir=.git \
+              --exclude-dir=.venv \
+              --exclude-dir=__pycache__ \
+              --exclude-dir=.pytest_cache \
+              --exclude='*.pyc' \
               '(AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{30,})' .; then
               echo "Potential secret found. Review the matches."
               exit 1
