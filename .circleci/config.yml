@@ -1,0 +1,123 @@
+version: 2.1
+
+jobs:
+  lint:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Install lint tools
+          command: pip install ruff
+      - run:
+          name: Lint application and tests
+          command: ruff check app tests
+
+  unit-tests:
+    docker:
+      - image: cimg/python:3.12
+    steps:
+      - checkout
+      - run:
+          name: Install dependencies
+          command: pip install -r requirements.txt pytest pytest-cov
+      - run:
+          name: Run unit tests with coverage
+          command: python -m pytest tests/test_reorder.py --cov=app.reorder --cov-report=term-missing
+
+  integration-tests:
+    docker:
+      - image: cimg/python:3.12
+      - image: cimg/postgres:16.1
+        environment:
+          POSTGRES_DB: inventory
+          POSTGRES_USER: inventory
+          POSTGRES_PASSWORD: local_dev_password
+      - image: cimg/redis:7.2
+    environment:
+      DATABASE_URL: postgresql://inventory:local_dev_password@localhost:5432/inventory
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - checkout
+      - run:
+          name: Install PostgreSQL client
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+      - run:
+          name: Install Python dependencies
+          command: pip install -r requirements.txt pytest pytest-cov
+      - run:
+          name: Wait for PostgreSQL
+          command: |
+            for i in $(seq 1 30); do
+              pg_isready -h localhost -U inventory -d inventory && break
+              sleep 2
+            done
+            pg_isready -h localhost -U inventory -d inventory
+      - run:
+          name: Wait for Redis
+          command: |
+            for i in $(seq 1 30); do
+              redis-cli -h localhost ping && break
+              sleep 2
+            done
+            redis-cli -h localhost ping
+      - run:
+          name: Apply database migrations
+          command: |
+            for file in migrations/*.sql; do
+              PGPASSWORD=local_dev_password psql 
+                -h localhost -U inventory -d inventory 
+                -v ON_ERROR_STOP=1 -f "$file"
+            done
+      - run:
+          name: Run integration tests
+          command: python -m pytest tests/test_integration.py -v
+
+  secret-scan:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - run:
+          name: Scan repository for secrets
+          command: |
+            set -eu
+            if grep -RInE 
+              --exclude-dir=.git 
+              --exclude-dir=.venv 
+              --exclude-dir=__pycache__ 
+              --exclude-dir=.pytest_cache 
+              --exclude='*.pyc' 
+              '(AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{30,})' .; then
+              echo "Potential secret found. Review the matches."
+              exit 1
+            else
+              echo "No matching high-risk secret patterns found."
+            fi
+
+  build-image:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Build Docker image
+          command: docker build -t inventory-alerts:1.0 .
+
+workflows:
+  version: 2
+  build-test-and-scan:
+    jobs:
+      - lint
+      - unit-tests
+      - integration-tests
+      - secret-scan
+      - build-image:
+          requires:
+            - lint
+            - unit-tests
+            - integration-tests
+            - secret-scan
